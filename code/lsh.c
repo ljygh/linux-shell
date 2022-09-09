@@ -21,6 +21,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <readline/readline.h>
 #include <readline/history.h>
@@ -38,6 +39,9 @@ void RunCommand(int, Command *);
 void DebugPrintCommand(int, Command *);
 void PrintPgm(Pgm *);
 void stripwhite(char *);
+
+void pipe_pgm(Pgm *pgm);
+void exec_pgm(Pgm *pgm);
 
 int main(void)
 {
@@ -76,9 +80,6 @@ int main(void)
   return 0;
 }
 
-void pipe_pgm(Pgm *pgm);
-void exec_pgm(Pgm *pgm);
-
 /* Execute the given command(s).
 
  * Note: The function currently only prints the command(s).
@@ -89,7 +90,16 @@ void exec_pgm(Pgm *pgm);
  */
 void RunCommand(int parse_result, Command *cmd)
 {
-  DebugPrintCommand(parse_result, cmd);
+	DebugPrintCommand(parse_result, cmd);
+
+	int fd_out;
+	int stdout_no;
+
+	if (cmd->rstdout != NULL) {
+		stdout_no = dup(STDOUT_FILENO);
+		fd_out = open(cmd->rstdout, O_WRONLY | O_CREAT | O_TRUNC, 0);
+		dup2(fd_out, STDOUT_FILENO);
+	}
 
 	pid_t pid = fork();
 	if (pid < 0) {
@@ -102,8 +112,18 @@ void RunCommand(int parse_result, Command *cmd)
 	} else { // Parent process
 		wait(NULL);
 	}
+
+	if (cmd->rstdout != NULL) {
+		dup2(stdout_no, STDOUT_FILENO);
+		close(stdout_no);
+		close(fd_out);
+	}
 }
 
+/*
+ * Recursively construct a sequencial program pipeline.
+ * Fork front of the pipeline to a child process and wait for completion before executing the given program.
+ */ 
 void pipe_pgm(Pgm *pgm) {
 	int fd[2];
 
@@ -113,6 +133,7 @@ void pipe_pgm(Pgm *pgm) {
 		return;
 	}
 
+	// Fork the process
 	pid_t pid = fork();
 	if (pid < 0) {
 		fprintf(stderr, "Fork failed");
@@ -128,11 +149,12 @@ void pipe_pgm(Pgm *pgm) {
 		close(fd[READ_END]);
 		close(fd[WRITE_END]);
 
-		// Pipe to next command if it exists
 		if (pgm->next == NULL) {
+			// Exit the process if there is no next program to pipe to
 			exit(0);
 		}
 		
+		// Pipe to the next program
 		pipe_pgm(pgm->next);
 	} else { // Parent process
 
@@ -143,12 +165,18 @@ void pipe_pgm(Pgm *pgm) {
 		close(fd[READ_END]);
 		close(fd[WRITE_END]);
 
+		// Wait for children process to complete
 		wait(NULL);
+
+		// Then execute
 		exec_pgm(pgm);
 	}
 
 }
 
+/* 
+ * Execute the given program, searching the $PATH if no path is given.
+ */
 void exec_pgm(Pgm *pgm) {
 	char *filename = pgm->pgmlist[0];
 	char **argv = pgm->pgmlist;
