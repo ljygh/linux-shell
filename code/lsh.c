@@ -31,6 +31,8 @@
 
 #define CWD_MAX_LENGTH 128
 #define HOST_MAX_LENGTH 32
+#define READ_END 0
+#define WRITE_END 1
 
 void RunCommand(int, Command *);
 void DebugPrintCommand(int, Command *);
@@ -74,6 +76,8 @@ int main(void)
   return 0;
 }
 
+void pipe_pgm(Pgm *pgm);
+void exec_pgm(Pgm *pgm);
 
 /* Execute the given command(s).
 
@@ -87,16 +91,69 @@ void RunCommand(int parse_result, Command *cmd)
 {
   DebugPrintCommand(parse_result, cmd);
 
-  pid_t pid = fork();
-  if (pid == 0) {
-	  char *filename = cmd->pgm->pgmlist[0]; // Only works for one pgm
-	  char **argv = cmd->pgm->pgmlist;
-	  execvp(filename, argv);
-  } else {
-	  wait(NULL);
-  }
+	pid_t pid = fork();
+	if (pid < 0) {
+		fprintf(stderr, "Fork failed");
+		return;
+	}
+
+	if (pid == 0) { // Child process
+		pipe_pgm(cmd->pgm);
+	} else { // Parent process
+		wait(NULL);
+	}
 }
 
+void pipe_pgm(Pgm *pgm) {
+	int fd[2];
+
+	// Open pipe
+	if (pipe(fd) == -1) {
+		fprintf(stderr, "Pipe failed");
+		return;
+	}
+
+	pid_t pid = fork();
+	if (pid < 0) {
+		fprintf(stderr, "Fork failed");
+		return;
+	}
+
+	if (pid == 0) { // Child process
+		
+		// Redirect write end of the pipe to stdout
+		dup2(fd[WRITE_END], STDOUT_FILENO);
+
+		// Close the no longer needed pipe ends
+		close(fd[READ_END]);
+		close(fd[WRITE_END]);
+
+		// Pipe to next command if it exists
+		if (pgm->next == NULL) {
+			exit(0);
+		}
+		
+		pipe_pgm(pgm->next);
+	} else { // Parent process
+
+		// Redirect read end of the pipe to stdin
+		dup2(fd[READ_END], STDIN_FILENO);
+
+		// Close the no longer needed pipe ends
+		close(fd[READ_END]);
+		close(fd[WRITE_END]);
+
+		wait(NULL);
+		exec_pgm(pgm);
+	}
+
+}
+
+void exec_pgm(Pgm *pgm) {
+	char *filename = pgm->pgmlist[0];
+	char **argv = pgm->pgmlist;
+	execvp(filename, argv);
+}
 
 /* 
  * Print a Command structure as returned by parse on stdout. 
