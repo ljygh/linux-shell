@@ -20,6 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <unistd.h>
+#include <sys/wait.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 #include "parse.h"
@@ -75,6 +77,15 @@ int main(void)
 void RunCommand(int parse_result, Command *cmd)
 {
   DebugPrintCommand(parse_result, cmd);
+
+  pid_t pid = fork();
+  if (pid == 0) {
+	  char *filename = cmd->pgm->pgmlist[0]; // Only works for one pgm
+	  char **argv = cmd->pgm->pgmlist;
+	  execvp(filename, argv);
+  } else {
+	  wait(NULL);
+  }
 }
 
 
