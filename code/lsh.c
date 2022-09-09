@@ -92,13 +92,29 @@ void RunCommand(int parse_result, Command *cmd)
 {
 	DebugPrintCommand(parse_result, cmd);
 
-	int fd_out;
-	int stdout_no;
+	int stdin_fd;
+	int stdout_fd;
+
+	if (cmd->rstdin != NULL) {
+		// Open the input file in read mode
+		int fd_in = open(cmd->rstdin, O_RDONLY);
+		// Backup the stdin file descriptor
+		stdin_fd = dup(STDIN_FILENO);
+		// Replace the stdin fd by a copy of the input file fd
+		dup2(fd_in, STDIN_FILENO);
+		// Close the original input file fd
+		close(fd_in);
+	}
 
 	if (cmd->rstdout != NULL) {
-		stdout_no = dup(STDOUT_FILENO);
-		fd_out = open(cmd->rstdout, O_WRONLY | O_CREAT | O_TRUNC, 0);
+		// Open the output file in write mode
+		int fd_out = open(cmd->rstdout, O_WRONLY | O_CREAT | O_TRUNC, 0);
+		// Backup the stdout file descriptor
+		stdout_fd = dup(STDOUT_FILENO);
+		// Replace the stdout fd by a copy of the output file fd
 		dup2(fd_out, STDOUT_FILENO);
+		// Close the original output file fd
+		close(fd_out);
 	}
 
 	pid_t pid = fork();
@@ -113,10 +129,18 @@ void RunCommand(int parse_result, Command *cmd)
 		wait(NULL);
 	}
 
+	if (cmd->rstdin != NULL) {
+		// Restore the original stdin fd
+		dup2(stdin_fd, STDIN_FILENO);
+		// Close the backup file descriptor
+		close(stdin_fd);
+	}
+
 	if (cmd->rstdout != NULL) {
-		dup2(stdout_no, STDOUT_FILENO);
-		close(stdout_no);
-		close(fd_out);
+		// Restore the original stdout fd
+		dup2(stdout_fd, STDOUT_FILENO);
+		// Close the backup file descriptor
+		close(stdout_fd);
 	}
 }
 
@@ -142,7 +166,7 @@ void pipe_pgm(Pgm *pgm) {
 
 	if (pid == 0) { // Child process
 		
-		// Redirect write end of the pipe to stdout
+		// Redirect stdout to write end of the pipe
 		dup2(fd[WRITE_END], STDOUT_FILENO);
 
 		// Close the no longer needed pipe ends
@@ -158,8 +182,10 @@ void pipe_pgm(Pgm *pgm) {
 		pipe_pgm(pgm->next);
 	} else { // Parent process
 
-		// Redirect read end of the pipe to stdin
-		dup2(fd[READ_END], STDIN_FILENO);
+		if (pgm->next != NULL) {
+			// Redirect stdin to read end of the pipe (only if not the first program of the pipe)
+			dup2(fd[READ_END], STDIN_FILENO);
+		}
 
 		// Close the no longer needed pipe ends
 		close(fd[READ_END]);
