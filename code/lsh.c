@@ -29,6 +29,9 @@
 #define TRUE 1
 #define FALSE 0
 
+#define CWD_MAX_LENGTH 128
+#define HOST_MAX_LENGTH 32
+
 void RunCommand(int, Command *);
 void DebugPrintCommand(int, Command *);
 void PrintPgm(Pgm *);
@@ -41,6 +44,12 @@ int main(void)
 
   while (TRUE)
   {
+	char cwd[CWD_MAX_LENGTH];
+	char hostname[HOST_MAX_LENGTH];
+	getcwd(cwd, CWD_MAX_LENGTH);
+	gethostname(hostname, HOST_MAX_LENGTH);
+	printf("%s@%s:%s ", getlogin(), hostname, cwd);
+
     char *line;
     line = readline("> ");
 
