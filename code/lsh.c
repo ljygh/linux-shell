@@ -20,6 +20,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/wait.h>
 #include <readline/readline.h>
 #include <readline/history.h>
 #include "parse.h"
@@ -29,12 +32,20 @@
 #define TRUE 1
 #define FALSE 0
 
+#define CWD_MAX_LENGTH 128
+#define HOST_MAX_LENGTH 32
+#define READ_END 0
+#define WRITE_END 1
+
 void RunCommand(int, Command *);
 void DebugPrintCommand(int, Command *);
 void PrintPgm(Pgm *);
 void stripwhite(char *);
 void cd(char** pgm);
 char* pwd();
+
+void pipe_pgm(Pgm *pgm);
+void exec_pgm(Pgm *pgm);
 
 int main(void)
 {
@@ -43,6 +54,12 @@ int main(void)
 
   while (TRUE)
   {
+	char cwd[CWD_MAX_LENGTH];
+	char hostname[HOST_MAX_LENGTH];
+	getcwd(cwd, CWD_MAX_LENGTH);
+	gethostname(hostname, HOST_MAX_LENGTH);
+	printf("%s@%s:%s ", getlogin(), hostname, cwd);
+
     char *line;
     line = readline("> ");
 
@@ -67,7 +84,6 @@ int main(void)
   return 0;
 }
 
-
 /* Execute the given command(s).
 
  * Note: The function currently only prints the command(s).
@@ -78,19 +94,124 @@ int main(void)
  */
 void RunCommand(int parse_result, Command *cmd)
 {
-  DebugPrintCommand(parse_result, cmd);
-  Pgm *pgm = cmd->pgm;;
-  char *rstdin = cmd->rstdin;
-  char *rstdout = cmd->rstdout;
-  char *rstderr = cmd->rstderr;
-  int background = cmd->background;
-  char **pgmlist = pgm->pgmlist;
-  struct c *next = pgm->next;
-  pwd();
-  cd(pgmlist);
-  pwd();
+	DebugPrintCommand(parse_result, cmd);
+
+	int stdin_fd;
+	int stdout_fd;
+
+	if (cmd->rstdin != NULL) {
+		// Open the input file in read mode
+		int fd_in = open(cmd->rstdin, O_RDONLY);
+		// Backup the stdin file descriptor
+		stdin_fd = dup(STDIN_FILENO);
+		// Replace the stdin fd by a copy of the input file fd
+		dup2(fd_in, STDIN_FILENO);
+		// Close the original input file fd
+		close(fd_in);
+	}
+
+	if (cmd->rstdout != NULL) {
+		// Open the output file in write mode
+		int fd_out = open(cmd->rstdout, O_WRONLY | O_CREAT | O_TRUNC, 0);
+		// Backup the stdout file descriptor
+		stdout_fd = dup(STDOUT_FILENO);
+		// Replace the stdout fd by a copy of the output file fd
+		dup2(fd_out, STDOUT_FILENO);
+		// Close the original output file fd
+		close(fd_out);
+	}
+
+	pid_t pid = fork();
+	if (pid < 0) {
+		fprintf(stderr, "Fork failed");
+		return;
+	}
+
+	if (pid == 0) { // Child process
+		pipe_pgm(cmd->pgm);
+	} else { // Parent process
+		wait(NULL);
+	}
+
+	if (cmd->rstdin != NULL) {
+		// Restore the original stdin fd
+		dup2(stdin_fd, STDIN_FILENO);
+		// Close the backup file descriptor
+		close(stdin_fd);
+	}
+
+	if (cmd->rstdout != NULL) {
+		// Restore the original stdout fd
+		dup2(stdout_fd, STDOUT_FILENO);
+		// Close the backup file descriptor
+		close(stdout_fd);
+	}
 }
 
+/*
+ * Recursively construct a sequencial program pipeline.
+ * Fork front of the pipeline to a child process and wait for completion before executing the given program.
+ */ 
+void pipe_pgm(Pgm *pgm) {
+	int fd[2];
+
+	// Open pipe
+	if (pipe(fd) == -1) {
+		fprintf(stderr, "Pipe failed");
+		return;
+	}
+
+	// Fork the process
+	pid_t pid = fork();
+	if (pid < 0) {
+		fprintf(stderr, "Fork failed");
+		return;
+	}
+
+	if (pid == 0) { // Child process
+		
+		// Redirect stdout to write end of the pipe
+		dup2(fd[WRITE_END], STDOUT_FILENO);
+
+		// Close the no longer needed pipe ends
+		close(fd[READ_END]);
+		close(fd[WRITE_END]);
+
+		if (pgm->next == NULL) {
+			// Exit the process if there is no next program to pipe to
+			exit(0);
+		}
+		
+		// Pipe to the next program
+		pipe_pgm(pgm->next);
+	} else { // Parent process
+
+		if (pgm->next != NULL) {
+			// Redirect stdin to read end of the pipe (only if not the first program of the pipe)
+			dup2(fd[READ_END], STDIN_FILENO);
+		}
+
+		// Close the no longer needed pipe ends
+		close(fd[READ_END]);
+		close(fd[WRITE_END]);
+
+		// Wait for children process to complete
+		wait(NULL);
+
+		// Then execute
+		exec_pgm(pgm);
+	}
+
+}
+
+/* 
+ * Execute the given program, searching the $PATH if no path is given.
+ */
+void exec_pgm(Pgm *pgm) {
+	char *filename = pgm->pgmlist[0];
+	char **argv = pgm->pgmlist;
+	execvp(filename, argv);
+}
 
 void cd(char** pgm){
   const char* dir = *(pgm + 1);
