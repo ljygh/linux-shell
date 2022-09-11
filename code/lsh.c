@@ -24,6 +24,8 @@
 #include <readline/history.h>
 #include "parse.h"
 
+#include <unistd.h>
+
 #define TRUE 1
 #define FALSE 0
 
@@ -31,6 +33,8 @@ void RunCommand(int, Command *);
 void DebugPrintCommand(int, Command *);
 void PrintPgm(Pgm *);
 void stripwhite(char *);
+void cd(char** pgm);
+char* pwd();
 
 int main(void)
 {
@@ -75,7 +79,32 @@ int main(void)
 void RunCommand(int parse_result, Command *cmd)
 {
   DebugPrintCommand(parse_result, cmd);
+  Pgm *pgm = cmd->pgm;;
+  char *rstdin = cmd->rstdin;
+  char *rstdout = cmd->rstdout;
+  char *rstderr = cmd->rstderr;
+  int background = cmd->background;
+  char **pgmlist = pgm->pgmlist;
+  struct c *next = pgm->next;
+  pwd();
+  cd(pgmlist);
+  pwd();
 }
+
+
+void cd(char** pgm){
+  const char* dir = *(pgm + 1);
+  chdir(dir);
+}
+
+char* pwd(){
+  char buffer[800];
+  size_t buff_size = 800;
+  getcwd(buffer, buff_size);
+  printf("%s\n", buffer);
+}
+
+
 
 
 /* 
