@@ -27,7 +27,8 @@
 #include <readline/history.h>
 #include "parse.h"
 
-#include <unistd.h>
+#include <errno.h>
+
 
 #define TRUE 1
 #define FALSE 0
@@ -37,11 +38,14 @@
 #define READ_END 0
 #define WRITE_END 1
 
+char lastCwd[CWD_MAX_LENGTH] = ""; // Declare a global variable for last current working directory.
+
 void RunCommand(int, Command *);
 void DebugPrintCommand(int, Command *);
 void PrintPgm(Pgm *);
 void stripwhite(char *);
-void cd(char** pgm);
+
+void cd(char** pgmlist);
 char* pwd();
 
 void pipe_pgm(Pgm *pgm);
@@ -58,7 +62,7 @@ int main(void)
 	char hostname[HOST_MAX_LENGTH];
 	getcwd(cwd, CWD_MAX_LENGTH);
 	gethostname(hostname, HOST_MAX_LENGTH);
-	printf("%s@%s:%s ", getlogin(), hostname, cwd);
+	printf("%s@%s:%s", getlogin(), hostname, cwd);
 
     char *line;
     line = readline("> ");
@@ -98,6 +102,12 @@ void RunCommand(int parse_result, Command *cmd)
 
 	int stdin_fd;
 	int stdout_fd;
+
+	// If the instruction is cd, run cd function
+	if(strcmp(*cmd->pgm->pgmlist, "cd") == 0){ 
+		cd(cmd->pgm->pgmlist);
+		return;
+	}
 
 	if (cmd->rstdin != NULL) {
 		// Open the input file in read mode
@@ -210,21 +220,87 @@ void pipe_pgm(Pgm *pgm) {
 void exec_pgm(Pgm *pgm) {
 	char *filename = pgm->pgmlist[0];
 	char **argv = pgm->pgmlist;
+	
 	execvp(filename, argv);
 }
 
-void cd(char** pgm){
-  const char* dir = *(pgm + 1);
-  chdir(dir);
-}
 
-char* pwd(){
-  char buffer[800];
-  size_t buff_size = 800;
-  getcwd(buffer, buff_size);
-  printf("%s\n", buffer);
-}
+/* 
+ * Change working directory according to given path
+ */
+void cd(char** pgmlist){
+	// Get current working dir in order to set last cwd if change cwd successfully.
+	char cwDir[CWD_MAX_LENGTH];
+	char* cwd = getcwd(cwDir, CWD_MAX_LENGTH);
+	if(cwd == NULL)
+		printf("lsh: cd: getcwd: %s\n", strerror(errno));
+	
+	//Get home dir
+	char* homeDir = getenv("HOME");
 
+	// If there are no arguments after cd, change to home dir if HOME env can be found.
+	if(*(pgmlist + 1) == NULL){ 
+		if(homeDir == NULL){
+			printf("lsh: cd: no HOME environment variable found\n");
+			return;
+		}
+		int ret = chdir(homeDir);
+		if(ret != 0){
+			printf("lsh: cd: chdir: %s\n", strerror(errno));
+			return;
+		}
+	}
+	// Else if the first argument is - or ~ .
+	else if(strcmp(*(pgmlist + 1), "-") == 0 || strcmp(*(pgmlist + 1), "~") == 0){
+		// If there is a second argument, print too many arguments and return.
+		if(*(pgmlist + 2) != NULL){
+			printf("lsh: cd: too many arguments\n");
+			return;
+		}
+
+		// If it is -, change to last cwd.
+		if(strcmp(*(pgmlist + 1), "-") == 0){
+			if(strcmp(lastCwd, "") == 0){
+				printf("lsh: cd: last cwd not set\n");
+				return;
+			}
+			int ret = chdir(lastCwd);
+			if(ret != 0){
+				printf("lsh: cd: chdir: %s\n", strerror(errno));
+				return;
+			}
+		}
+		// If it is ~, change to home dir.
+		else{
+			if(homeDir == NULL){
+				printf("lsh: cd: no HOME environment variable found\n");
+				return;
+			}
+			int ret = chdir(homeDir);
+			if(ret != 0){
+				printf("lsh: cd: chdir: %s\n", strerror(errno));
+				return;
+			}
+		}
+	}
+	// Else concat all arguments as a path and change 
+	else{
+		char dir[CWD_MAX_LENGTH];
+		strcpy(dir, *(pgmlist + 1));
+		for(int i = 2; *(pgmlist + i) != NULL; i ++){
+			strcat(dir, " ");
+			strcat(dir, *(pgmlist + i));
+		}
+		printf("concated dir: %s\n", dir);
+		int ret = chdir(dir);
+		if(ret != 0){
+			printf("Error in cd chdir: %s\n", strerror(errno));
+			return;
+		}
+	}
+
+	strcpy(lastCwd, cwd); // If changing working directory successfully, set last cwd.
+}
 
 
 
