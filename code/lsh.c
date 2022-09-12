@@ -28,6 +28,7 @@
 #include "parse.h"
 
 #include <errno.h>
+#include <signal.h>
 
 
 #define TRUE 1
@@ -46,7 +47,7 @@ void PrintPgm(Pgm *);
 void stripwhite(char *);
 
 void cd(char** pgmlist);
-char* pwd();
+void INTHandler(int signo);
 
 void pipe_pgm(Pgm *pgm);
 void exec_pgm(Pgm *pgm);
@@ -58,6 +59,11 @@ int main(void)
 
   while (TRUE)
   {
+	// Make the main process ignore SIGINT signal.
+	struct sigaction sa;
+	sa.sa_handler = SIG_IGN;
+	sigaction(SIGINT, &sa, NULL);
+
 	char cwd[CWD_MAX_LENGTH];
 	char hostname[HOST_MAX_LENGTH];
 	getcwd(cwd, CWD_MAX_LENGTH);
@@ -103,10 +109,16 @@ void RunCommand(int parse_result, Command *cmd)
 	int stdin_fd;
 	int stdout_fd;
 
-	// If the instruction is cd, run cd function
+	// If the instruction is cd, run cd function.
 	if(strcmp(*cmd->pgm->pgmlist, "cd") == 0){ 
 		cd(cmd->pgm->pgmlist);
 		return;
+	}
+
+	// Quit the shell if the instruction is exit; Kill the whole process group.
+	if(strcmp(*cmd->pgm->pgmlist, "exit") == 0){ 
+		pid_t pgid = getpgrp();
+		kill(-pgid, SIGKILL);
 	}
 
 	if (cmd->rstdin != NULL) {
@@ -138,6 +150,11 @@ void RunCommand(int parse_result, Command *cmd)
 	}
 
 	if (pid == 0) { // Child process
+		// Set SIGINT handler for the child process.
+		struct sigaction sa;
+        sa.sa_handler = INTHandler;
+        sigaction(SIGINT, &sa, NULL);
+
 		pipe_pgm(cmd->pgm);
 	} else { // Parent process
 		wait(NULL);
@@ -300,6 +317,16 @@ void cd(char** pgmlist){
 	}
 
 	strcpy(lastCwd, cwd); // If changing working directory successfully, set last cwd.
+}
+
+/* 
+ * SIGINT signal handler: After receiving SIGINT, exit the process.
+ */
+void INTHandler(int signo){
+    if(signo == SIGINT){
+        printf("get signal\n");
+        exit(0); // !!!Only kill itself!!!
+    }
 }
 
 
