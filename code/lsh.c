@@ -48,21 +48,32 @@ void stripwhite(char *);
 
 void cd(char** pgmlist);
 void INTHandler(int signo);
+int interact();
 
 void pipe_pgm(Pgm *pgm);
 void exec_pgm(Pgm *pgm);
 
+
+
+
 int main(void)
 {
-  Command cmd;
-  int parse_result;
-
-  while (TRUE)
-  {
 	// Make the main process ignore SIGINT signal.
 	struct sigaction sa;
 	sa.sa_handler = SIG_IGN;
 	sigaction(SIGINT, &sa, NULL);
+	while (TRUE)
+	{
+		if(!interact())
+			break;
+	}
+	return 0;
+}
+
+
+int interact(){
+	Command cmd;
+  	int parse_result;
 
 	char cwd[CWD_MAX_LENGTH];
 	char hostname[HOST_MAX_LENGTH];
@@ -76,7 +87,7 @@ int main(void)
     /* If EOF encountered, exit shell */
     if (!line)
     {
-      break;
+      return FALSE;
     }
     /* Remove leading and trailing whitespace from the line */
     stripwhite(line);
@@ -90,8 +101,7 @@ int main(void)
 
     /* Clear memory */
     free(line);
-  }
-  return 0;
+	return TRUE;
 }
 
 /* Execute the given command(s).
@@ -157,7 +167,30 @@ void RunCommand(int parse_result, Command *cmd)
 
 		pipe_pgm(cmd->pgm);
 	} else { // Parent process
-		wait(NULL);
+		if(!cmd->background){
+			int status = 0;
+			waitpid(pid, &status, 0);
+		}
+		else{
+			
+
+			while(TRUE){
+				int status = 0;
+				pid_t ID = waitpid(-1, &status, WNOHANG);
+
+				if(ID == 0)
+					interact();
+
+				else if(ID > 0){
+					printf("Background process %d terminates\n", ID);
+					break;
+				}
+				else{
+					perror("Waitpid error: ");
+					break;
+				}
+			}
+		}
 	}
 
 	if (cmd->rstdin != NULL) {
