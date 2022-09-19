@@ -41,6 +41,15 @@
 
 char lastCwd[CWD_MAX_LENGTH] = ""; // Declare a global variable for last current working directory.
 
+// Def a struct for background processes.
+typedef struct bg_job
+{
+  int job_id;
+  int pid;
+  char* cmd; // process command
+  struct bg_job *next; // next background process
+} bg_job;
+
 void RunCommand(int, Command *);
 void DebugPrintCommand(int, Command *);
 void PrintPgm(Pgm *);
@@ -49,11 +58,19 @@ void stripwhite(char *);
 void cd(char** pgmlist);
 void INTHandler(int signo);
 int interact();
+void add_bg_job(bg_job *job);
+void print_bg_jobs();
+bg_job* remove_bg_job(int pid);
+char* get_cmd(char **pgmlist);
+void jobs(char **pgmlist);
+void print_bg_job(int job_id);
 
 void pipe_pgm(Pgm *pgm);
 void exec_pgm(Pgm *pgm);
 
-
+// head and tail of linked list of background processes.
+bg_job *bg_job_head;
+bg_job *bg_job_tail;
 
 
 int main(void)
@@ -62,6 +79,13 @@ int main(void)
 	struct sigaction sa;
 	sa.sa_handler = SIG_IGN;
 	sigaction(SIGINT, &sa, NULL);
+
+	// Assign for head and tail 
+	bg_job job;
+	job.job_id = 0;
+	bg_job_head = &job;
+	bg_job_tail = bg_job_head;
+
 	while (TRUE)
 	{
 		if(!interact())
@@ -70,7 +94,7 @@ int main(void)
 	return 0;
 }
 
-
+// One interact with user.
 int interact(){
 	Command cmd;
   	int parse_result;
@@ -125,6 +149,12 @@ void RunCommand(int parse_result, Command *cmd)
 		return;
 	}
 
+	// If the instruction is jobs, run jobs function.
+	if(strcmp(*cmd->pgm->pgmlist, "jobs") == 0){
+		jobs(cmd->pgm->pgmlist);
+		return;
+	}
+
 	// Quit the shell if the instruction is exit; Kill the whole process group.
 	if(strcmp(*cmd->pgm->pgmlist, "exit") == 0){ 
 		pid_t pgid = getpgrp();
@@ -167,22 +197,30 @@ void RunCommand(int parse_result, Command *cmd)
 
 		pipe_pgm(cmd->pgm);
 	} else { // Parent process
-		if(!cmd->background){
+		if(!cmd->background){ // Not background, wait for this specific child.
 			int status = 0;
 			waitpid(pid, &status, 0);
 		}
-		else{
-			
+		else{ // Background, wait for background children one time in WNOHANG mode, then do next interact.
+			// add a new bg process to list.
+			struct bg_job job;
+			job.job_id = bg_job_tail->job_id + 1;
+			job.pid = pid;
+			job.cmd = get_cmd(cmd->pgm->pgmlist);
+			job.next = NULL;
+			add_bg_job(&job);
+			printf("[%d] %d\n", job.job_id, job.pid);
 
 			while(TRUE){
 				int status = 0;
-				pid_t ID = waitpid(-1, &status, WNOHANG);
+				pid_t PID = waitpid(-1, &status, WNOHANG);
 
-				if(ID == 0)
+				if(PID == 0) // No bg child states change, do next interact.
 					interact();
 
-				else if(ID > 0){
-					printf("Background process %d terminates\n", ID);
+				else if(PID > 0){ // A child state changes, remove it from list.
+					bg_job *del_job = remove_bg_job(PID);
+					printf("[%d] +done %s\n", del_job->job_id, del_job->cmd);
 					break;
 				}
 				else{
@@ -352,6 +390,25 @@ void cd(char** pgmlist){
 	strcpy(lastCwd, cwd); // If changing working directory successfully, set last cwd.
 }
 
+
+
+/* 
+ * View bg processes
+ */
+void jobs(char **pgmlist){
+	if(*(pgmlist + 1) == NULL){ // No argument, view all bg processes.
+		print_bg_jobs();
+		return;
+	} 
+	// Else, view specific bg process
+	char *job_num_str = *(pgmlist + 1);
+	int job_num = atoi(job_num_str);
+	if(job_num == 0)
+		printf("lsh: jobs: %s: no such job\n", job_num_str);
+	else
+		print_bg_job(job_num);
+}
+
 /* 
  * SIGINT signal handler: After receiving SIGINT, exit the process.
  */
@@ -361,6 +418,88 @@ void INTHandler(int signo){
         exit(0); // !!!Only kill itself!!!
     }
 }
+
+
+
+/* 
+ * Add a job to list
+ */
+void add_bg_job(bg_job *job){
+	bg_job_tail->next = job;
+	bg_job_tail = job;
+}
+
+
+
+/* 
+ * Remove a job from list, return the removed job
+ */
+bg_job* remove_bg_job(int pid){
+	struct bg_job *job = bg_job_head;
+	struct bg_job *del_job;
+	while (job->next != NULL)
+	{
+		if(job->next->pid == pid){
+			del_job = job->next;
+			job->next = job->next->next;
+			if(del_job== bg_job_tail)
+				bg_job_tail = job;
+			del_job->next = NULL;
+			break;
+		}
+		job = job->next;
+	}	
+	return del_job;
+}
+
+
+
+/* 
+ * Print all jobs in the list.
+ */
+void print_bg_jobs(){
+	bg_job *job = bg_job_head->next;
+	while(job != NULL){
+		printf("[%d] +running %s\n", job->job_id, job->cmd);
+		job = job->next;
+	}
+}
+
+
+
+/* 
+ * Print a specific job in the list
+ */
+void print_bg_job(int job_id){
+	bg_job *job = bg_job_head->next;
+	while(job != NULL){
+		if(job->job_id == job_id){
+			printf("[%d] +running %s\n", job->job_id, job->cmd);
+			return;
+		}
+		job = job->next;
+	}
+	printf("lsh: jobs: %d: no such job\n", job_id);
+}
+
+
+
+/* 
+ * Convert pgmlist to a string.
+ */
+char* get_cmd(char **pgmlist){
+	char *cmd = malloc(sizeof(char) * 128);
+	int len = 0;
+	strcpy(cmd, *(pgmlist));
+	len += strlen(*(pgmlist));
+	for(int i = 1; *(pgmlist + i) != NULL; i ++){
+		strcat(cmd, " ");
+		strcat(cmd, *(pgmlist + i));
+		len += strlen(*(pgmlist + i)) + 1;
+	}
+	return cmd;
+}
+
 
 
 
