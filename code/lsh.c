@@ -64,6 +64,7 @@ bg_job* remove_bg_job(int pid);
 char* get_cmd(char **pgmlist);
 void jobs(char **pgmlist);
 void print_bg_job(int job_id);
+void killAllBgp();
 
 void pipe_pgm(Pgm *pgm);
 void exec_pgm(Pgm *pgm);
@@ -157,8 +158,8 @@ void RunCommand(int parse_result, Command *cmd)
 
 	// Quit the shell if the instruction is exit; Kill the whole process group.
 	if(strcmp(*cmd->pgm->pgmlist, "exit") == 0){ 
-		pid_t pgid = getpgrp();
-		kill(-pgid, SIGKILL);
+		killAllBgp();
+		exit(0);
 	}
 
 	if (cmd->rstdin != NULL) {
@@ -190,10 +191,12 @@ void RunCommand(int parse_result, Command *cmd)
 	}
 
 	if (pid == 0) { // Child process
-		// Set SIGINT handler for the child process.
-		struct sigaction sa;
-        sa.sa_handler = INTHandler;
-        sigaction(SIGINT, &sa, NULL);
+		// Set SIGINT handler for the child process which doesn't run in the background.
+		if(!cmd->background){
+			struct sigaction sa;
+			sa.sa_handler = INTHandler;
+			sigaction(SIGINT, &sa, NULL);
+		}
 
 		pipe_pgm(cmd->pgm);
 	} else { // Parent process
@@ -313,6 +316,20 @@ void exec_pgm(Pgm *pgm) {
 }
 
 
+
+/* 
+ * Kill all background processes.
+ */
+void killAllBgp(){
+	bg_job *job = bg_job_head->next;
+	int ret;
+	while(job != NULL){
+		kill(job->pid, SIGKILL);
+		job = job->next;
+	}
+}
+
+
 /* 
  * Change working directory according to given path
  */
@@ -379,7 +396,6 @@ void cd(char** pgmlist){
 			strcat(dir, " ");
 			strcat(dir, *(pgmlist + i));
 		}
-		printf("concated dir: %s\n", dir);
 		int ret = chdir(dir);
 		if(ret != 0){
 			printf("Error in cd chdir: %s\n", strerror(errno));
@@ -414,7 +430,6 @@ void jobs(char **pgmlist){
  */
 void INTHandler(int signo){
     if(signo == SIGINT){
-        printf("get signal\n");
         exit(0); // !!!Only kill itself!!!
     }
 }
