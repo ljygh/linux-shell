@@ -57,7 +57,6 @@ void stripwhite(char *);
 
 void cd(char** pgmlist);
 void INTHandler(int signo);
-int interact();
 void add_bg_job(bg_job *job);
 void print_bg_jobs();
 bg_job* remove_bg_job(int pid);
@@ -65,7 +64,7 @@ char* get_cmd(char **pgmlist);
 void jobs(char **pgmlist);
 void print_bg_job(int job_id);
 void killAllBgp();
-
+void CHLDHandler(int signo);
 void pipe_pgm(Pgm *pgm);
 void exec_pgm(Pgm *pgm);
 
@@ -73,13 +72,21 @@ void exec_pgm(Pgm *pgm);
 bg_job *bg_job_head;
 bg_job *bg_job_tail;
 
+// String to store background processes' messages when they terminate
+char *bg_job_message;
+
 
 int main(void)
 {
 	// Make the main process ignore SIGINT signal.
-	struct sigaction sa;
-	sa.sa_handler = SIG_IGN;
-	sigaction(SIGINT, &sa, NULL);
+	struct sigaction sa_INT;
+	sa_INT.sa_handler = SIG_IGN;
+	sigaction(SIGINT, &sa_INT, NULL);
+
+	// Set SIGCHLD handler for main process
+	struct sigaction sa_CHLD;
+	sa_CHLD.sa_handler = CHLDHandler;
+	sigaction(SIGCHLD, &sa_CHLD, NULL);
 
 	// Assign for head and tail 
 	bg_job job;
@@ -87,47 +94,50 @@ int main(void)
 	bg_job_head = &job;
 	bg_job_tail = bg_job_head;
 
+	bg_job_message = malloc(sizeof(char) * 200);
+
 	while (TRUE)
 	{
-		if(!interact())
-			break;
+		Command cmd;
+		int parse_result;
+
+		char cwd[CWD_MAX_LENGTH];
+		char hostname[HOST_MAX_LENGTH];
+		getcwd(cwd, CWD_MAX_LENGTH);
+		gethostname(hostname, HOST_MAX_LENGTH);
+
+		// Output the background process messages and clear it.
+		printf("%s", bg_job_message);
+		*bg_job_message = '\0';
+
+		// Print user info and cwd
+		printf("%s@%s:%s", getlogin(), hostname, cwd);
+
+		char *line;
+		line = readline("> ");
+
+		/* If EOF encountered, exit shell */
+		if (!line)
+		{
+			continue;
+		}
+		/* Remove leading and trailing whitespace from the line */
+		stripwhite(line);
+		/* If stripped line not blank */
+		if (*line)
+		{
+			add_history(line);
+			parse_result = parse(line, &cmd);
+			RunCommand(parse_result, &cmd);
+		}
+
+		/* Clear memory */
+		free(line);
 	}
 	return 0;
 }
 
-// One interact with user.
-int interact(){
-	Command cmd;
-  	int parse_result;
 
-	char cwd[CWD_MAX_LENGTH];
-	char hostname[HOST_MAX_LENGTH];
-	getcwd(cwd, CWD_MAX_LENGTH);
-	gethostname(hostname, HOST_MAX_LENGTH);
-	printf("%s@%s:%s", getlogin(), hostname, cwd);
-
-    char *line;
-    line = readline("> ");
-
-    /* If EOF encountered, exit shell */
-    if (!line)
-    {
-      return FALSE;
-    }
-    /* Remove leading and trailing whitespace from the line */
-    stripwhite(line);
-    /* If stripped line not blank */
-    if (*line)
-    {
-      add_history(line);
-      parse_result = parse(line, &cmd);
-      RunCommand(parse_result, &cmd);
-    }
-
-    /* Clear memory */
-    free(line);
-	return TRUE;
-}
 
 /* Execute the given command(s).
 
@@ -198,33 +208,15 @@ void RunCommand(int parse_result, Command *cmd)
 			int status = 0;
 			waitpid(pid, &status, 0);
 		}
-		else{ // Background, wait for background children one time in WNOHANG mode, then do next interact.
+		else{ // Background, do not wait.
 			// add a new bg process to list.
-			struct bg_job job;
-			job.job_id = bg_job_tail->job_id + 1;
-			job.pid = pid;
-			job.cmd = get_cmd(cmd->pgm->pgmlist);
-			job.next = NULL;
-			add_bg_job(&job);
-			printf("[%d] %d\n", job.job_id, job.pid);
-
-			while(TRUE){
-				int status = 0;
-				pid_t PID = waitpid(-1, &status, WNOHANG);
-
-				if(PID == 0) // No bg child states change, do next interact.
-					interact();
-
-				else if(PID > 0){ // A child state changes, remove it from list.
-					bg_job *del_job = remove_bg_job(PID);
-					printf("[%d] +done %s\n", del_job->job_id, del_job->cmd);
-					break;
-				}
-				else{
-					perror("Waitpid error: ");
-					break;
-				}
-			}
+			bg_job *job = malloc(sizeof(bg_job));
+			job->job_id = bg_job_tail->job_id + 1;
+			job->pid = pid;
+			job->cmd = get_cmd(cmd->pgm->pgmlist);
+			job->next = NULL;
+			add_bg_job(job);
+			printf("[%d] %d\n", job->job_id, job->pid);
 		}
 	}
 
@@ -440,9 +432,26 @@ void jobs(char **pgmlist){
  * SIGINT signal handler: After receiving SIGINT, exit the process.
  */
 void INTHandler(int signo){
-    if(signo == SIGINT){
-        exit(0); // !!!Only kill itself!!!
-    }
+    exit(0); // !!!Only kill itself!!!
+}
+
+
+
+/* 
+ * SIGCHLD signal handler: After receiving SIGCHLD, wait a child's pid in WNOHANG mode.
+ */
+void CHLDHandler(int signo){
+	int status = 0;
+	pid_t PID = waitpid(-1, &status, WNOHANG);
+
+	if(PID > 0){ // A child terminated, remove it from list and write the terminate info to the bg_job_message.
+		bg_job *del_job = remove_bg_job(PID);
+		if(del_job != NULL){
+			char message[50];
+			sprintf(message, "[%d] +done %s\n", del_job->job_id, del_job->cmd);
+			strcat(bg_job_message, message);
+		}
+	}
 }
 
 
@@ -462,7 +471,7 @@ void add_bg_job(bg_job *job){
  */
 bg_job* remove_bg_job(int pid){
 	struct bg_job *job = bg_job_head;
-	struct bg_job *del_job;
+	struct bg_job *del_job = NULL;
 	while (job->next != NULL)
 	{
 		if(job->next->pid == pid){
