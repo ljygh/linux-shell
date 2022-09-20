@@ -149,7 +149,7 @@ int main(void)
  */
 void RunCommand(int parse_result, Command *cmd)
 {
-	DebugPrintCommand(parse_result, cmd);
+	// DebugPrintCommand(parse_result, cmd);
 
 	int stdin_fd;
 	int stdout_fd;
