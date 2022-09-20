@@ -169,7 +169,7 @@ void RunCommand(int parse_result, Command *cmd)
 
 	if (cmd->rstdout != NULL) {
 		// Open the output file in write mode
-		int fd_out = open(cmd->rstdout, O_WRONLY | O_CREAT | O_TRUNC, 0);
+		int fd_out = open(cmd->rstdout, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU);
 		// Backup the stdout file descriptor
 		stdout_fd = dup(STDOUT_FILENO);
 		// Replace the stdout fd by a copy of the output file fd
