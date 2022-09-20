@@ -144,15 +144,9 @@ void RunCommand(int parse_result, Command *cmd)
 	int stdin_fd;
 	int stdout_fd;
 
-	// If the instruction is cd, run cd function.
-	if(strcmp(*cmd->pgm->pgmlist, "cd") == 0){ 
-		cd(cmd->pgm->pgmlist);
-		return;
-	}
-
 	// If the instruction is jobs, run jobs function.
-	if(strcmp(*cmd->pgm->pgmlist, "jobs") == 0){
-		jobs(cmd->pgm->pgmlist);
+	if(strcmp(*cmd->pgm->pgmlist, "cd") == 0 && cmd->pgm->next == NULL){
+		cd(cmd->pgm->pgmlist);
 		return;
 	}
 
@@ -297,10 +291,22 @@ void pipe_pgm(Pgm *pgm) {
 		close(fd[WRITE_END]);
 
 		// Wait for children process to complete
-		wait(NULL);
+		int status;
+		waitpid(pid, &status, 0);
 
-		// Then execute
-		exec_pgm(pgm);
+		// Then execute, enable cd and jobs in pipe
+		// If the instruction is cd, run cd function.
+		if(strcmp(*pgm->pgmlist, "cd") == 0){ 
+			cd(pgm->pgmlist);
+			exit(0);
+		}
+		// If the instruction is jobs, run jobs function.
+		else if(strcmp(*pgm->pgmlist, "jobs") == 0){
+			jobs(pgm->pgmlist);
+			exit(0);
+		}
+		else
+			exec_pgm(pgm);
 	}
 
 }
@@ -312,7 +318,12 @@ void exec_pgm(Pgm *pgm) {
 	char *filename = pgm->pgmlist[0];
 	char **argv = pgm->pgmlist;
 	
-	execvp(filename, argv);
+	int ret = execvp(filename, argv);
+	// If the instruction not found, print error and exit the process.
+	if(ret == -1){
+		perror("lsh: exec_pgm: ");
+		exit(0);
+	}
 }
 
 
