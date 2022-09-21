@@ -13,6 +13,9 @@ Meanwhile, the child calls `execvp` to change its process image with the provide
 
 ### Section 2
 
+Implemation of running command in the background.
+`Runcommand` function is used to run a command. In this function, a child process is created using `fork` and the command runs  in the child process. In the parent process, it check `cmd.background`. If `background` is false, the parent process waits for the child until the child exits. In this situation, the shell waits for the child and blocks. For user, the command is running in foreground. On the other hand, if the `background` is true, the parent doesn't wait so that the parent can continue and interact with user. So, for the user, the command is running in the background.  In order to prevent the child from being a zombie, the function `CHLDHandler` is declared and if a child terminates, this function will get the CHLD signal and handle the terminated child by using `waitpid`. This handler is set for the main process in the beginning of `main` function.
+In order to print information of background jobs(processes) while creating and terminating a bg(background) job and manage bg jobs, a linked list of struct `bg_job` is used to store info of bg jobs. Head and tail of this list are initialized in `main` function. In the parent process of `Runcommand`, if `background` is true, a new struct `bg_job` is created and add to the list. Then, info of this new bg job is printed. After a child terminated, in `CHLDHandler`, bg_job of this child is removed from the list according to its pid and its info is added to `bg_job_message`. Before every new cycle of the command line, the message will be printed. The command `jobs` is implemented, when user input the `jobs` command, all info of bg jobs will be printed by the function `print_bg_jobs`. The user can also view info of a bg job specified by its job number like `jobs 1`. Then the function `print_bg_job` will print info of this specific bg job.
 
 
 ### Section 3
@@ -33,14 +36,19 @@ Redirection of `stdout` works in much the same way, except that we create the ou
 
 ### Section 5
 
+Implementation of cd and exit.
+`cd` function is used to implement command cd. In the beginning of this function, current working directory `cwd` and home directory `homeDir` are got. Afterwards, it checks the argument after cd. If the argument is null, it changes the cwd(current working directory) to `homeDir` by calling the function `chdir`. And for '-' and '~', it respectively changes cwd to last cwd(null in the beginning and is set at the end of each `cd`) and `homeDir`. Else, it converts 'cmd.pgm.pgmlist' to a string of dir and uses `chdir` to change cwd to this dir. The entry of `cd` function is both in the `RunCommand` and `pipe_pgm`. If cd is used with `|`, it works in child process of `pipe_pgm`. Otherwise, it works in the main process and changes cwd of the shell.
 
+Exit is implemented in `RunCommand`. If the command starts with 'exit', it will call `killAllBgp` function to send SIGKILL to all processes in this process group. `SIGKILLHandler` is set for bg child processes in `RunCommand` function's child process part. This will be automatically inherited to bg processes's children too. So, when the main process sends SIGKILL signal, all bg processes will receive this signal because they are all in the group of the main process. Then, they will run `SIGKILLHandler` function to wait for their all child processes until they terminate and exit. In the function `killAllBgp`, main process waits for all its child processes until they terminate, too. Afterwards, the main process exit.
 
 ### Section 6
 
-
+Implementation of ctrl c.
+`INTHandler` function is declared. If it is set to a process. When the user presses ctrl c, the process will receive INT signal, wait for all its child processes until they terminate and exit. In `RumCommand` function, this INTHandler is set to the child process if `background` is false. And automatically, the handler will be inherited to all child processes of this child process. So, if ctrl c is pressed, all foreground processes will run `INTHandler`. If they don't have child, they terminate directly. Otherwise, they wait and handle all terminations of their child processes first and then, exit. Therefore, all foreground processes will terminate from the youngest one to the oldest one.
+`SIG_IGN` is set to be the handler of SIGINT signal for the main process to ignore the SIGINT. Therefore, when ctrl c is pressed, the main process won't terminate.
 
 ### Section 7
-
+`SIG_IGN` is set to be the handler of SIGINT signal for the main process to ignore the SIGINT. And, for bg processes, no new INTHandler is set to them. So, they inherit the SIGINT handler from the main process and ignore the SIGINT, too. Therefore, when ctrl c is pressed, both the main process and bg processes won't terminate.
 
 
 ## Self-test examples
