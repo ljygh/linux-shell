@@ -60,13 +60,15 @@ void INTHandler(int signo);
 void add_bg_job(bg_job *job);
 void print_bg_jobs();
 bg_job* remove_bg_job(int pid);
-char* get_cmd(char **pgmlist);
+char* get_cmd(Pgm *pgm);
+char* get_cmd_line(char **pgmlist);
 void jobs(char **pgmlist);
 void print_bg_job(int job_id);
 void killAllBgp();
 void CHLDHandler(int signo);
 void pipe_pgm(Pgm *pgm);
 void exec_pgm(Pgm *pgm);
+void SIGKILLHandler(int signo);
 
 // head and tail of linked list of background processes.
 bg_job *bg_job_head;
@@ -201,6 +203,12 @@ void RunCommand(int parse_result, Command *cmd)
 			sa.sa_handler = INTHandler;
 			sigaction(SIGINT, &sa, NULL);
 		}
+		// Set SIGKILL handler for the child process which runs in the background.
+		else{
+			struct sigaction sa;
+			sa.sa_handler = SIGKILLHandler;
+			sigaction(SIGKILL, &sa, NULL);
+		}
 
 		pipe_pgm(cmd->pgm);
 	} else { // Parent process
@@ -213,7 +221,7 @@ void RunCommand(int parse_result, Command *cmd)
 			bg_job *job = malloc(sizeof(bg_job));
 			job->job_id = bg_job_tail->job_id + 1;
 			job->pid = pid;
-			job->cmd = get_cmd(cmd->pgm->pgmlist);
+			job->cmd = get_cmd(cmd->pgm);
 			job->next = NULL;
 			add_bg_job(job);
 			printf("[%d] %d\n", job->job_id, job->pid);
@@ -324,12 +332,8 @@ void exec_pgm(Pgm *pgm) {
  * Kill all background processes.
  */
 void killAllBgp(){
-	bg_job *job = bg_job_head->next;
-	int ret;
-	while(job != NULL){
-		kill(job->pid, SIGKILL);
-		job = job->next;
-	}
+	// Send SIGKILL to the whole process group.
+	kill(0, SIGKILL);
 	while(TRUE){
 		int status;
 		int ret = waitpid(-1, &status, WNOHANG);
@@ -435,16 +439,24 @@ void jobs(char **pgmlist){
 }
 
 /* 
- * SIGINT signal handler: After receiving SIGINT, exit the process.
+ * SIGINT signal handler: After receiving SIGINT, if has child, wait it. Afterwards, exit the process.
  */
 void INTHandler(int signo){
-    exit(0); // !!!Only kill itself!!!
+	while (TRUE)
+	{
+		int status;
+		int ret = waitpid(-1, &status, WNOHANG);
+		if(ret == -1)
+			break;
+	}
+    exit(0);
 }
 
 
 
 /* 
- * SIGCHLD signal handler: After receiving SIGCHLD, wait a child's pid in WNOHANG mode.
+ * SIGCHLD signal handler: After receiving SIGCHLD, wait a child's pid in WNOHANG mode one time. 
+ * If the pid is in the bg job list, remove that job from list and add info to bg job message.
  */
 void CHLDHandler(int signo){
 	int status = 0;
@@ -458,6 +470,22 @@ void CHLDHandler(int signo){
 			strcat(bg_job_message, message);
 		}
 	}
+}
+
+
+
+/* 
+ * SIGKILL signal handler: After receiving SIGKILL, if has child, wait it. Afterwards, exit the process.
+ */
+void SIGKILLHandler(int signo){
+	while (TRUE)
+	{
+		int status;
+		int ret = waitpid(-1, &status, WNOHANG);
+		if(ret == -1)
+			break;
+	}
+    exit(0);
 }
 
 
@@ -528,7 +556,7 @@ void print_bg_job(int job_id){
 /* 
  * Convert pgmlist to a string.
  */
-char* get_cmd(char **pgmlist){
+char* get_cmd_line(char **pgmlist){
 	char *cmd = malloc(sizeof(char) * 128);
 	int len = 0;
 	strcpy(cmd, *(pgmlist));
@@ -541,6 +569,24 @@ char* get_cmd(char **pgmlist){
 	return cmd;
 }
 
+
+
+/* 
+ * Convert pgm to a string.
+ */
+char* get_cmd(Pgm *pgm){
+	char *cmd = malloc(sizeof(char) * 128);
+	Pgm *p = pgm;
+	strcpy(cmd, get_cmd_line(p->pgmlist));
+	p = p->next;
+	while (p != NULL)
+	{
+		strcat(cmd, " | ");
+		strcat(cmd, get_cmd_line(p->pgmlist));
+		p = p->next;
+	}
+	return cmd;
+}
 
 
 
