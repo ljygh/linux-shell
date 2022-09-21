@@ -330,6 +330,12 @@ void killAllBgp(){
 		kill(job->pid, SIGKILL);
 		job = job->next;
 	}
+	while(TRUE){
+		int status;
+		int ret = waitpid(-1, &status, WNOHANG);
+		if(ret == -1)
+			return;
+	}
 }
 
 
