@@ -22,3 +22,6 @@ This is implemented in `RunCommand` and `void exec_pgm(Pgm *pgm)`. The unix func
 
 ### 2. Support the use of one or more pipes e.g. `ls | grep out | wc -w`
 This is implemented in `pipe_pgm` and the function is called in `RunCommand` function. The function is called recursively to implement multiple pipes. In every step, a new child process is created to execute a previous program in the pipe. The parent process and child process communicate with `pipe()` function. `stdin` file discripter for parent process needs to be changed to `read end` of the pipe and `stdout` for child process needs to be changed to `write end` of the pipe, because a process uses `stdin` and `stdout` to execute a program by default. `stdin` and `stdout` don't need to be changed back because file descriptors only exist when the process is alive.
+
+### 3. Allow redirection of the standard input and output to file, e.g. `wc -l < /etc/passwd > accounts`
+This is implemented in `RunCommand` function by changing `stdin` and `stdout` before and after `fork` in the shell process.
