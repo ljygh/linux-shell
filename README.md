@@ -1,4 +1,5 @@
 # Linux shell
+Here is a simple implementation of linux shell for practice.
 
 ## Install required libraries
 Examples are for debian-based systems.
