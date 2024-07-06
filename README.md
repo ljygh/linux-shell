@@ -34,3 +34,5 @@ This is implemented in `RunCommand` function by changing `stdin` and `stdout` be
 5. CHLDHandler is used by the main process. So, after a background job is done or killed, SIGCHILD will be sent to the main process and this job will be removed from the list. 
 
 ### 6. Implement `cd` and `exit`
+1. Exit: kill all background processes and wait for them to terminate. (In function: `killAllBgp`).
+2. CD: Read `void cd` function.
