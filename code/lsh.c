@@ -38,17 +38,16 @@
 #define HOST_MAX_LENGTH 32
 #define READ_END 0
 #define WRITE_END 1
-
-char lastCwd[CWD_MAX_LENGTH] = ""; // Declare a global variable for last current working directory.
+#define JOB_MESSAGE_MAX_LENGTH 200
 
 // Def a struct for background processes.
-typedef struct bg_job
+typedef struct Bg_job
 {
   int job_id;
   int pid;
-  char* cmd; // process command
-  struct bg_job *next; // next background process
-} bg_job;
+  char *cmd; // process command
+  struct Bg_job *next; // next background process
+} Bg_job;
 
 void RunCommand(int, Command *);
 void DebugPrintCommand(int, Command *);
@@ -57,9 +56,9 @@ void stripwhite(char *);
 
 void cd(char** pgmlist);
 void INTHandler(int signo);
-void add_bg_job(bg_job *job);
+void add_bg_job(Bg_job *job);
 void print_bg_jobs();
-bg_job* remove_bg_job(int pid);
+Bg_job* remove_bg_job(int pid);
 char* get_cmd(Pgm *pgm);
 char* get_cmd_line(char **pgmlist);
 void jobs(char **pgmlist);
@@ -70,9 +69,11 @@ void pipe_pgm(Pgm *pgm);
 void exec_pgm(Pgm *pgm);
 void SIGKILLHandler(int signo);
 
+char lastCwd[CWD_MAX_LENGTH] = ""; // Declare a global variable for last current working directory.
+
 // head and tail of linked list of background processes.
-bg_job *bg_job_head;
-bg_job *bg_job_tail;
+Bg_job *bg_job_head;
+Bg_job *bg_job_tail;
 
 // String to store background processes' messages when they terminate
 char *bg_job_message;
@@ -91,12 +92,12 @@ int main(void)
 	sigaction(SIGCHLD, &sa_CHLD, NULL);
 
 	// Assign for head and tail 
-	bg_job job;
+	Bg_job job;
 	job.job_id = 0;
+	job.next = NULL;
 	bg_job_head = &job;
 	bg_job_tail = bg_job_head;
-
-	bg_job_message = malloc(sizeof(char) * 200);
+	bg_job_message = malloc(sizeof(char) * JOB_MESSAGE_MAX_LENGTH);
 
 	while (TRUE)
 	{
@@ -140,7 +141,6 @@ int main(void)
 }
 
 
-
 /* Execute the given command(s).
 
  * Note: The function currently only prints the command(s).
@@ -155,6 +155,11 @@ void RunCommand(int parse_result, Command *cmd)
 
 	// Check if the command is 'cd' or 'exit'
 	// If the instruction is jobs, run jobs function.
+	if(strcmp(*cmd->pgm->pgmlist, "jobs") == 0){
+		jobs(cmd->pgm->pgmlist + 1);
+		return;
+	}
+
 	if(strcmp(*cmd->pgm->pgmlist, "cd") == 0 && cmd->pgm->next == NULL){
 		cd(cmd->pgm->pgmlist);
 		return;
@@ -200,7 +205,14 @@ void RunCommand(int parse_result, Command *cmd)
 	}
 
 	// Child process
-	if (pid == 0) { 
+	if (pid == 0) {
+		// Piped program
+		if(cmd->pgm->next != NULL){
+			pipe_pgm(cmd->pgm);
+			exit(0);
+		}
+
+		// No piped program
 		// Set SIGINT handler for the child process which doesn't run in the background.
 		if(!cmd->background){
 			struct sigaction sa;
@@ -213,13 +225,7 @@ void RunCommand(int parse_result, Command *cmd)
 			sa.sa_handler = SIGKILLHandler;
 			sigaction(SIGKILL, &sa, NULL);
 		}
-
-		// No piped program
-		if(cmd->pgm->next == NULL)
-			exec_pgm(cmd->pgm);
-		// Piped programs
-		else
-			pipe_pgm(cmd->pgm);
+		exec_pgm(cmd->pgm);
 	} 
 	// Parent process
 	else {
@@ -229,7 +235,7 @@ void RunCommand(int parse_result, Command *cmd)
 		}
 		else{ // Background, do not wait.
 			// add a new bg process to list.
-			bg_job *job = malloc(sizeof(bg_job));
+			Bg_job *job = malloc(sizeof(Bg_job));
 			job->job_id = bg_job_tail->job_id + 1;
 			job->pid = pid;
 			job->cmd = get_cmd(cmd->pgm);
@@ -253,6 +259,7 @@ void RunCommand(int parse_result, Command *cmd)
 		close(stdout_fd);
 	}
 }
+
 
 /*
  * Recursively construct a sequencial program pipeline.
@@ -310,6 +317,7 @@ void pipe_pgm(Pgm *pgm) {
 
 }
 
+
 /* 
  * Execute the given program, searching the $PATH if no path is given.
  */
@@ -324,7 +332,6 @@ void exec_pgm(Pgm *pgm) {
 		exit(0);
 	}
 }
-
 
 
 /* 
@@ -419,23 +426,42 @@ void cd(char** pgmlist){
 }
 
 
-
 /* 
  * View bg processes
  */
 void jobs(char **pgmlist){
-	if(*(pgmlist + 1) == NULL){ // No argument, view all bg processes.
+	if(*(pgmlist) == NULL){ // No argument, view all bg processes.
 		print_bg_jobs();
 		return;
 	} 
 	// Else, view specific bg process
-	char *job_num_str = *(pgmlist + 1);
+	char *job_num_str = *(pgmlist);
 	int job_num = atoi(job_num_str);
 	if(job_num == 0)
 		printf("lsh: jobs: %s: no such job\n", job_num_str);
 	else
 		print_bg_job(job_num);
 }
+
+
+/* 
+ * SIGCHLD signal handler: After receiving SIGCHLD, wait a child's pid in WNOHANG mode one time. 
+ * If the pid is in the bg job list, remove that job from list and add info to bg job message.
+ */
+void CHLDHandler(int signo){
+	int status = 0;
+	pid_t PID = waitpid(-1, &status, WNOHANG);
+
+	if(PID > 0){ // A child terminated, remove it from list and write the terminate info to the bg_job_message.
+		Bg_job *del_job = remove_bg_job(PID);
+		if(del_job != NULL){
+			char message[50];
+			sprintf(message, "[%d] +done %s\n", del_job->job_id, del_job->cmd);
+			strcat(bg_job_message, message);
+		}
+	}
+}
+
 
 /* 
  * SIGINT signal handler: After receiving SIGINT, if has child, wait it. Afterwards, exit the process.
@@ -450,27 +476,6 @@ void INTHandler(int signo){
 	}
     exit(0);
 }
-
-
-
-/* 
- * SIGCHLD signal handler: After receiving SIGCHLD, wait a child's pid in WNOHANG mode one time. 
- * If the pid is in the bg job list, remove that job from list and add info to bg job message.
- */
-void CHLDHandler(int signo){
-	int status = 0;
-	pid_t PID = waitpid(-1, &status, WNOHANG);
-
-	if(PID > 0){ // A child terminated, remove it from list and write the terminate info to the bg_job_message.
-		bg_job *del_job = remove_bg_job(PID);
-		if(del_job != NULL){
-			char message[50];
-			sprintf(message, "[%d] +done %s\n", del_job->job_id, del_job->cmd);
-			strcat(bg_job_message, message);
-		}
-	}
-}
-
 
 
 /* 
@@ -488,23 +493,21 @@ void SIGKILLHandler(int signo){
 }
 
 
-
 /* 
  * Add a job to list
  */
-void add_bg_job(bg_job *job){
+void add_bg_job(Bg_job *job){
 	bg_job_tail->next = job;
 	bg_job_tail = job;
 }
 
 
-
 /* 
  * Remove a job from list, return the removed job
  */
-bg_job* remove_bg_job(int pid){
-	struct bg_job *job = bg_job_head;
-	struct bg_job *del_job = NULL;
+Bg_job* remove_bg_job(int pid){
+	struct Bg_job *job = bg_job_head;
+	struct Bg_job *del_job = NULL;
 	while (job->next != NULL)
 	{
 		if(job->next->pid == pid){
@@ -521,28 +524,26 @@ bg_job* remove_bg_job(int pid){
 }
 
 
-
 /* 
  * Print all jobs in the list.
  */
 void print_bg_jobs(){
-	bg_job *job = bg_job_head->next;
+	Bg_job *job = bg_job_head->next;
 	while(job != NULL){
-		printf("[%d] +running %s\n", job->job_id, job->cmd);
+		printf("[%d] +running %s, %d\n", job->job_id, job->cmd, job->pid);
 		job = job->next;
 	}
 }
-
 
 
 /* 
  * Print a specific job in the list
  */
 void print_bg_job(int job_id){
-	bg_job *job = bg_job_head->next;
+	Bg_job *job = bg_job_head->next;
 	while(job != NULL){
 		if(job->job_id == job_id){
-			printf("[%d] +running %s\n", job->job_id, job->cmd);
+			printf("[%d] +running %s, %d\n", job->job_id, job->cmd, job->pid);
 			return;
 		}
 		job = job->next;
@@ -551,7 +552,7 @@ void print_bg_job(int job_id){
 }
 
 
-
+// #################### Debug functions ########################
 /* 
  * Convert pgmlist to a string.
  */
@@ -567,7 +568,6 @@ char* get_cmd_line(char **pgmlist){
 	}
 	return cmd;
 }
-
 
 
 /* 
@@ -586,7 +586,6 @@ char* get_cmd(Pgm *pgm){
 	}
 	return cmd;
 }
-
 
 
 /* 
