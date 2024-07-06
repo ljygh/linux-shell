@@ -275,7 +275,6 @@ void pipe_pgm(Pgm *pgm) {
 	}
 
 	if (pid == 0) { // Child process
-		
 		// Redirect stdout to write end of the pipe
 		dup2(fd[WRITE_END], STDOUT_FILENO);
 
@@ -290,8 +289,8 @@ void pipe_pgm(Pgm *pgm) {
 		
 		// Pipe to the next program
 		pipe_pgm(pgm->next);
-	} else { // Parent process
-
+	} 
+	else { // Parent process
 		if (pgm->next != NULL) {
 			// Redirect stdin to read end of the pipe (only if not the first program of the pipe)
 			dup2(fd[READ_END], STDIN_FILENO);
@@ -305,19 +304,8 @@ void pipe_pgm(Pgm *pgm) {
 		int status;
 		waitpid(pid, &status, 0);
 
-		// Then execute, enable cd and jobs in pipe
-		// If the instruction is cd, run cd function.
-		if(strcmp(*pgm->pgmlist, "cd") == 0){ 
-			cd(pgm->pgmlist);
-			exit(0);
-		}
-		// If the instruction is jobs, run jobs function.
-		else if(strcmp(*pgm->pgmlist, "jobs") == 0){
-			jobs(pgm->pgmlist);
-			exit(0);
-		}
-		else
-			exec_pgm(pgm);
+		// Then execute
+		exec_pgm(pgm);
 	}
 
 }
