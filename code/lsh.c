@@ -153,9 +153,7 @@ void RunCommand(int parse_result, Command *cmd)
 {
 	// DebugPrintCommand(parse_result, cmd);
 
-	int stdin_fd;
-	int stdout_fd;
-
+	// Check if the command is 'cd' or 'exit'
 	// If the instruction is jobs, run jobs function.
 	if(strcmp(*cmd->pgm->pgmlist, "cd") == 0 && cmd->pgm->next == NULL){
 		cd(cmd->pgm->pgmlist);
@@ -167,6 +165,10 @@ void RunCommand(int parse_result, Command *cmd)
 		killAllBgp();
 		exit(0);
 	}
+
+	// If not, run corresponding binary program in child process
+	int stdin_fd;
+	int stdout_fd;
 
 	if (cmd->rstdin != NULL) {
 		// Open the input file in read mode
@@ -190,13 +192,15 @@ void RunCommand(int parse_result, Command *cmd)
 		close(fd_out);
 	}
 
+	// Create a child process
 	pid_t pid = fork();
 	if (pid < 0) {
 		fprintf(stderr, "Fork failed");
 		return;
 	}
 
-	if (pid == 0) { // Child process
+	// Child process
+	if (pid == 0) { 
 		// Set SIGINT handler for the child process which doesn't run in the background.
 		if(!cmd->background){
 			struct sigaction sa;
@@ -210,8 +214,15 @@ void RunCommand(int parse_result, Command *cmd)
 			sigaction(SIGKILL, &sa, NULL);
 		}
 
-		pipe_pgm(cmd->pgm);
-	} else { // Parent process
+		// No piped program
+		if(cmd->pgm->next == NULL)
+			exec_pgm(cmd->pgm);
+		// Piped programs
+		else
+			pipe_pgm(cmd->pgm);
+	} 
+	// Parent process
+	else {
 		if(!cmd->background){ // Not background, wait for this specific child.
 			int status = 0;
 			waitpid(pid, &status, 0);
